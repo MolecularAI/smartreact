@@ -1,0 +1,41 @@
+[workspace]
+name = "smartreact"
+description = "Enumerating chemical reaction products using SMARTS patterns"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-arm64", "osx-64"]
+
+[dependencies]
+python = ">=3.10"
+rdkit = ">=2023.09"
+
+[pypi-dependencies]
+smartreact = { path = ".", editable = true }
+
+[feature.dev.dependencies]
+pytest = ">=7"
+ruff = ">=0.4"
+mypy = ">=1.20.2,<2"
+
+[feature.notebook.dependencies]
+jupyter = "*"
+ipywidgets = "*"
+
+[feature.casestudy.dependencies]
+pandas = ">=2.0"
+scikit-learn = ">=1.0"
+umap-learn = ">=0.5"
+pyarrow = ">=10"
+matplotlib = ">=3.5"
+
+[environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+notebook = { features = ["dev", "notebook"], solve-group = "default" }
+casestudy = { features = ["dev", "casestudy"], solve-group = "default" }
+
+[tasks]
+test = "pytest"
+lint = "ruff check src/ tests/"
+typecheck = "mypy"
+format = "ruff format src/ tests/"
+format-check = "ruff format --check src/ tests/"

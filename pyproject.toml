@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling>=1.25", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smartreact"
+dynamic = ["version"]
+description = "Enumerating chemical reaction products using SMARTS patterns"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Fabian Kruger" },
+    { name = "Thierry Kogej" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "rdkit>=2023.09",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "ruff>=0.4",
+    "mypy>=1.10",
+]
+notebook = [
+    "jupyter",
+    "ipywidgets",
+]
+
+[project.urls]
+Repository = "https://github.com/MolecularAI/smartreact"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/smartreact/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smartreact"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["src/smartreact/_version.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["smartreact"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["src/smartreact"]
+
+[[tool.mypy.overrides]]
+module = ["rdkit", "rdkit.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

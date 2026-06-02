@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[codz]
+*.so
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+src/smartreact/_version.py
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Virtual environments
+.venv/
+.pixi/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Linting / type-checking
+.ruff_cache/
+.mypy_cache/
+
+# Environment variables
+.env
+
+# Local data (root-level only, not src/smartreact/data/)
+/data/
+
+# SLURM (cluster-specific, not for publication)
+/slurm/
+
+# VS Code settings
+.vscode/
