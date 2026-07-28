@@ -13,7 +13,7 @@ from rdkit.Chem import AllChem
 
 from .cleaning import clean_smiles as _clean_smiles
 from .keygen import KeyGenerator
-from .keys import extract_key_strings, orders_for_template
+from .keys import build_template_index, candidate_templates, extract_key_strings
 from .templates import load_templates
 from .types import ReactionResult, ReactionTemplate
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _RXN_CACHE: dict[str, AllChem.ChemicalReaction] = {}
 _WORKER_TEMPLATES: list[ReactionTemplate] | None = None
+_WORKER_TEMPLATE_INDEX: dict[tuple[str, str], list[int]] | None = None
 
 
 def _get_rxn(smarts: str) -> AllChem.ChemicalReaction | None:
@@ -75,12 +76,15 @@ def _collect_products(
 
 def _worker_init(
     templates: list[ReactionTemplate] | None = None,
+    template_index: dict[tuple[str, str], list[int]] | None = None,
     log_file: str | None = None,
 ) -> None:
-    """Configure templates and logging in worker processes."""
-    global _WORKER_TEMPLATES
+    """Configure templates, the key-pair template index, and logging in worker processes."""
+    global _WORKER_TEMPLATES, _WORKER_TEMPLATE_INDEX
     if templates is not None:
         _WORKER_TEMPLATES = templates
+    if template_index is not None:
+        _WORKER_TEMPLATE_INDEX = template_index
     if not log_file:
         return
     try:
@@ -101,27 +105,33 @@ def _worker_init(
 def _worker_run_pair(
     s1: str,
     s2: str,
+    m1: Chem.Mol | None,
+    m2: Chem.Mol | None,
     keys1: set[str],
     keys2: set[str],
 ) -> list[ReactionResult]:
     """Run all applicable templates for one pair in a worker process.
 
-    Templates are pre-loaded into ``_WORKER_TEMPLATES`` via the pool initializer,
-    so they are not serialized per-task.  Molecules are parsed once per call.
+    Templates and the key-pair template index are pre-loaded into
+    ``_WORKER_TEMPLATES`` / ``_WORKER_TEMPLATE_INDEX`` via the pool initializer,
+    so they are not serialized per-task.  ``m1``/``m2`` are parsed once per
+    unique molecule by the caller and reused across all of that molecule's
+    pairs, rather than re-parsed for every pair occurrence.  Candidate
+    templates are found via an index lookup over the pair's own (typically
+    small) key sets, rather than scanning every template.
     """
     assert _WORKER_TEMPLATES is not None, "_WORKER_TEMPLATES not initialised in worker"
+    assert _WORKER_TEMPLATE_INDEX is not None, "_WORKER_TEMPLATE_INDEX not initialised in worker"
 
-    m1 = Chem.MolFromSmiles(s1)
-    m2 = Chem.MolFromSmiles(s2)
     if m1 is None or m2 is None:
         return []
 
     ra, rb = tuple(sorted([s1, s2]))
     results: list[ReactionResult] = []
-    for templ in _WORKER_TEMPLATES:
-        orders = orders_for_template(keys1, keys2, templ.reactant_categories)
-        if not orders:
-            continue
+    candidates = candidate_templates(keys1, keys2, _WORKER_TEMPLATE_INDEX)
+    for idx in sorted(candidates):
+        templ = _WORKER_TEMPLATES[idx]
+        orders = candidates[idx]
         rxn = _get_rxn(templ.smarts)
         if rxn is None:
             continue
@@ -147,16 +157,31 @@ def _worker_run_pair(
 
 def _worker_run_pairs_batch(
     pairs: list[tuple[str, str]],
+    smiles_mols: dict[str, Chem.Mol | None],
     smiles_keys: dict[str, set[str]],
 ) -> list[ReactionResult]:
     """Process a batch of pairs in a single worker call.
 
     Receiving a whole batch minimises IPC round-trips: the main process
-    sends exactly ``n_cores`` tasks instead of one per pair.
+    sends exactly ``n_cores`` tasks instead of one per pair.  ``smiles_mols``
+    is parsed once per unique molecule by the caller rather than re-parsed
+    here for every pair; parsing costs roughly 5x what shipping the parsed
+    ``Mol`` does, so this is a clear win whenever molecules recur across
+    pairs (as they do in combinatorial enumeration).
+
+    ``smiles_mols`` and ``smiles_keys`` are restricted by the caller to the
+    molecules this batch actually references.  Every ``submit`` pickles its
+    arguments independently, so passing the chunk-wide dicts would serialise
+    them once per batch -- ``n_cores`` copies of data each worker mostly
+    cannot use.
     """
     results: list[ReactionResult] = []
     for s1, s2 in pairs:
-        results.extend(_worker_run_pair(s1, s2, smiles_keys[s1], smiles_keys[s2]))
+        results.extend(
+            _worker_run_pair(
+                s1, s2, smiles_mols[s1], smiles_mols[s2], smiles_keys[s1], smiles_keys[s2]
+            )
+        )
     return results
 
 
@@ -189,6 +214,7 @@ class ReactionEnumerator:
 
         self.keygen = KeyGenerator(n_cores=self.n_cores)
         self.templates: list[ReactionTemplate] = load_templates(reaction_list=reaction_list)
+        self.template_index = build_template_index(self.templates)
         self.log_file = log_file
         self._pool: ProcessPoolExecutor | None = None
 
@@ -196,7 +222,9 @@ class ReactionEnumerator:
         if self._pool is None:
             self._pool = ProcessPoolExecutor(
                 max_workers=self.n_cores,
-                initializer=partial(_worker_init, self.templates, self.log_file),
+                initializer=partial(
+                    _worker_init, self.templates, self.template_index, self.log_file
+                ),
             )
         return self._pool
 
@@ -232,23 +260,30 @@ class ReactionEnumerator:
     def _keys_for_smiles(self, smiles: str) -> set[str]:
         return extract_key_strings(self.keygen.classify(str(smiles)))
 
-    def _enumerate_pair_from_keys(
+    def _enumerate_pair_from_mols(
         self,
         s1: str,
         s2: str,
+        m1: Chem.Mol | None,
+        m2: Chem.Mol | None,
         keys1: set[str],
         keys2: set[str],
     ) -> list[ReactionResult]:
-        m1 = Chem.MolFromSmiles(s1)
-        m2 = Chem.MolFromSmiles(s2)
+        """Core enumeration logic given already-parsed molecules.
+
+        Callers that process many pairs (``_process_chunk``) parse each
+        unique SMILES once and reuse the ``Mol`` across all of that
+        molecule's pairs, rather than calling this once per pair with a
+        freshly parsed molecule every time.
+        """
         if m1 is None or m2 is None:
             return []
 
         results: list[ReactionResult] = []
-        for templ in self.templates:
-            orders = orders_for_template(keys1, keys2, templ.reactant_categories)
-            if not orders:
-                continue
+        candidates = candidate_templates(keys1, keys2, self.template_index)
+        for idx in sorted(candidates):
+            templ = self.templates[idx]
+            orders = candidates[idx]
 
             rxn = _get_rxn(templ.smarts)
             if rxn is None:
@@ -279,6 +314,17 @@ class ReactionEnumerator:
                 )
             )
         return results
+
+    def _enumerate_pair_from_keys(
+        self,
+        s1: str,
+        s2: str,
+        keys1: set[str],
+        keys2: set[str],
+    ) -> list[ReactionResult]:
+        m1 = Chem.MolFromSmiles(s1)
+        m2 = Chem.MolFromSmiles(s2)
+        return self._enumerate_pair_from_mols(s1, s2, m1, m2, keys1, keys2)
 
     # ------------------------------------------------------------------
     # Public API
@@ -363,6 +409,7 @@ class ReactionEnumerator:
                 return
 
         unique_smiles = list({s for pair in pair_list for s in pair})
+        smiles_mols: dict[str, Chem.Mol | None] = {s: Chem.MolFromSmiles(s) for s in unique_smiles}
 
         if precomputed_keys is not None:
             missing = [s for s in unique_smiles if s not in precomputed_keys]
@@ -382,14 +429,27 @@ class ReactionEnumerator:
 
         if not parallel or self.n_cores == 1:
             for a, b in pair_list:
-                yield from self._enumerate_pair_from_keys(a, b, smiles_keys[a], smiles_keys[b])
+                yield from self._enumerate_pair_from_mols(
+                    a, b, smiles_mols[a], smiles_mols[b], smiles_keys[a], smiles_keys[b]
+                )
             return
 
         chunk_size = max(1, len(pair_list) // self.n_cores)
         batches = [pair_list[i : i + chunk_size] for i in range(0, len(pair_list), chunk_size)]
 
         ex = self._get_pool()
-        futures = [ex.submit(_worker_run_pairs_batch, batch, smiles_keys) for batch in batches]
+        # Ship each worker only the molecules its own batch references: submit
+        # pickles its arguments per call, so passing the chunk-wide dicts would
+        # serialise them n_cores times over.
+        futures = [
+            ex.submit(
+                _worker_run_pairs_batch,
+                batch,
+                {s: smiles_mols[s] for pair in batch for s in pair},
+                {s: smiles_keys[s] for pair in batch for s in pair},
+            )
+            for batch in batches
+        ]
         try:
             for fut in futures:
                 yield from fut.result()

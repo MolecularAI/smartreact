@@ -4,7 +4,12 @@ from .cleaning import clean_smiles
 from .conversion import detect_format, read_sdf_block, read_sdf_file, to_smiles
 from .enumerator import ReactionEnumerator
 from .keygen import KeyGenerator, KeysLibrary, load_rules
-from .keys import extract_key_strings, orders_for_template
+from .keys import (
+    build_template_index,
+    candidate_templates,
+    extract_key_strings,
+    orders_for_template,
+)
 from .preprocessing import load_preprocessed, preprocess_smiles, save_preprocessed
 from .templates import load_templates
 from .types import KeyMatch, KeysResult, ReactionResult, ReactionTemplate, Rule
@@ -27,6 +32,8 @@ __all__ = [
     "Rule",
     "extract_key_strings",
     "orders_for_template",
+    "build_template_index",
+    "candidate_templates",
     "clean_smiles",
     "to_smiles",
     "detect_format",

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from collections.abc import Sequence
 from typing import Any
+
+from .types import ReactionTemplate
 
 
 def extract_key_strings(res: Any) -> set[str]:
@@ -61,4 +65,52 @@ def orders_for_template(
     return orders
 
 
-__all__ = ["extract_key_strings", "orders_for_template"]
+def build_template_index(templates: Sequence[ReactionTemplate]) -> dict[tuple[str, str], list[int]]:
+    """Map each (left_req, right_req) requirement pair to the template indices that need it.
+
+    Built once from the template library. Lets :func:`candidate_templates` find
+    applicable templates via lookups over a pair's own key sets, instead of
+    scanning every template for every reactant pair.
+    """
+    index: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for i, templ in enumerate(templates):
+        index[templ.reactant_categories].append(i)
+    return dict(index)
+
+
+def candidate_templates(
+    keys1: set[str],
+    keys2: set[str],
+    index: dict[tuple[str, str], list[int]],
+) -> dict[int, list[int]]:
+    """Find template indices whose reactant_categories are satisfied by (keys1, keys2).
+
+    Equivalent to calling :func:`orders_for_template` for every template in the
+    library and keeping the non-empty results, but costs O(|keys1| * |keys2|)
+    index lookups rather than O(len(templates)).
+
+    Returns
+    -------
+    dict[int, list[int]]
+        Maps template index to its list of valid orders (``[0]``, ``[1]``, or
+        ``[0, 1]``), keyed and ordered exactly as :func:`orders_for_template`
+        would produce for that template.
+    """
+    candidates: dict[int, set[int]] = defaultdict(set)
+    for ka in keys1:
+        for kb in keys2:
+            for t in index.get((ka, kb), ()):
+                candidates[t].add(0)
+    for ka in keys2:
+        for kb in keys1:
+            for t in index.get((ka, kb), ()):
+                candidates[t].add(1)
+    return {t: sorted(orders) for t, orders in candidates.items()}
+
+
+__all__ = [
+    "extract_key_strings",
+    "orders_for_template",
+    "build_template_index",
+    "candidate_templates",
+]
