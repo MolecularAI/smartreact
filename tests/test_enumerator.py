@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import logging
 from unittest.mock import patch
 
@@ -74,6 +75,33 @@ class TestEnumeratePairs:
     def test_empty_input(self, enumerator: ReactionEnumerator):
         assert enumerator.enumerate_pairs([]) == []
 
+    def test_parses_each_unique_molecule_once(self, enumerator: ReactionEnumerator):
+        """Regression test: enumerate_pairs must parse each unique SMILES once,
+        not once per pair occurrence, even when a molecule appears in many pairs.
+
+        Keys are precomputed up front so the patched window only covers
+        enumerator-level Mol parsing, not KeyGenerator's own (separate)
+        internal MolFromSmiles call during classification.
+        """
+        from smartreact.preprocessing import preprocess_smiles
+
+        pairs = [
+            (BROMOBENZENE, PHENYLBORONIC_ACID),
+            (BROMOBENZENE, ETHYLAMINE),
+            (BROMOBENZENE, ACETIC_ACID),
+            (IODOBENZENE, ETHYLAMINE),
+        ]
+        unique_smiles = {s for pair in pairs for s in pair}
+        keys_map = preprocess_smiles(list(unique_smiles), enumerator.keygen)
+
+        with patch(
+            "smartreact.enumerator.Chem.MolFromSmiles",
+            wraps=Chem.MolFromSmiles,
+        ) as mock_parse:
+            enumerator.enumerate_pairs(pairs, parallel=False, precomputed_keys=keys_map)
+
+        assert mock_parse.call_count == len(unique_smiles)
+
     def test_parallel_matches_sequential(self):
         pairs = [
             (BROMOBENZENE, PHENYLBORONIC_ACID),
@@ -109,10 +137,55 @@ class TestEnumeratePairs:
 
         assert {_key(r) for r in results_seq} == {_key(r) for r in results_par}
 
+    def test_workers_receive_only_their_own_batch_molecules(self):
+        """Each submitted batch must carry only the molecules it references.
+
+        ``submit`` pickles its arguments per call, so passing the chunk-wide
+        mol/key dicts to every batch would serialise them n_cores times over.
+        """
+        molecules = [
+            BROMOBENZENE,
+            PHENYLBORONIC_ACID,
+            ETHYLAMINE,
+            ACETIC_ACID,
+            IODOBENZENE,
+            ETHANOL,
+        ]
+        pairs = list(itertools.combinations(molecules, 2))
+
+        enum_par = ReactionEnumerator(n_cores=3)
+        ex = enum_par._get_pool()
+        real_submit = ex.submit
+        captured: list[tuple[list[tuple[str, str]], set[str], set[str]]] = []
+
+        def _spy(fn, batch, mols, keys):
+            captured.append((batch, set(mols), set(keys)))
+            return real_submit(fn, batch, mols, keys)
+
+        with patch.object(ex, "submit", _spy):
+            enum_par.enumerate_pairs(pairs, parallel=True)
+
+        assert len(captured) > 1, "expected the pair list to be split across several batches"
+        for batch, mols, keys in captured:
+            needed = {s for pair in batch for s in pair}
+            assert mols == needed
+            assert keys == needed
+
+        # At least one batch must be a strict subset, or the assertions above
+        # would also pass for code that broadcasts everything to everyone.
+        assert any(mols < set(molecules) for _, mols, _ in captured)
+        assert set().union(*(mols for _, mols, _ in captured)) == set(molecules)
+
 
 class TestEnumeratorInit:
     def test_default_reactions(self, enumerator: ReactionEnumerator):
         assert len(enumerator.templates) > 0
+
+    def test_template_index_covers_all_templates(self, enumerator: ReactionEnumerator):
+        """The key-pair index used for candidate lookup must reference every
+        loaded template exactly once."""
+        indexed_ids = sorted(idx for idxs in enumerator.template_index.values() for idx in idxs)
+        assert indexed_ids == list(range(len(enumerator.templates)))
 
     def test_all_reactions(self, enumerator_all: ReactionEnumerator):
         default_enum = ReactionEnumerator(n_cores=1)
