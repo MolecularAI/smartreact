@@ -11,6 +11,10 @@ METHYLAMINE = "CN"
 BIPHENYL = "c1ccc(-c2ccccc2)cc1"
 ETHANOL = "CCO"
 DIMETHYLAMINE = "CNC"
+PHENOL = "Oc1ccccc1"
+S_BUTAN_2_OL = "C[C@H](O)CC"
+R_BUTAN_2_OL = "C[C@@H](O)CC"
+BUTAN_2_OL = "CCC(O)C"
 
 
 @pytest.fixture(scope="session")

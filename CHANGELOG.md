@@ -4,6 +4,10 @@ This follows the guideline on [keep a changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
+### Fixed
+
+- Mitsunobu products now have the correct configuration at the carbinol carbon. The reaction proceeds by backside attack, so that centre inverts, but the templates left it unmarked and RDKit's default is to carry the reactant's configuration through unchanged — every stereodefined Mitsunobu product was the wrong enantiomer. All 60 mitsunobu templates now mark the centre as inverted relative to the input, so both input enantiomers are handled by the same template and an undefined centre stays undefined. No products are gained or lost; only their stereochemistry changes
+
 ### Changed
 
 - Reaction templates updated with the inert `;!$([a3])` qualifier removed (11,848 occurrences across 2,368 templates). `[a3]` means "aromatic *and* isotope 3", which no realistic molecule satisfies

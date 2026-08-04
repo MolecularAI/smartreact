@@ -15,11 +15,15 @@ from .conftest import (
     ACETIC_ACID,
     BIPHENYL,
     BROMOBENZENE,
+    BUTAN_2_OL,
     DIMETHYLAMINE,
     ETHANOL,
     ETHYLAMINE,
     IODOBENZENE,
+    PHENOL,
     PHENYLBORONIC_ACID,
+    R_BUTAN_2_OL,
+    S_BUTAN_2_OL,
 )
 
 
@@ -50,6 +54,24 @@ class TestEnumeratePair:
         """Two molecules with no compatible reaction should return empty."""
         results = enumerator.enumerate_pair("C", "CC")
         assert results == []
+
+
+class TestMitsunobuStereochemistry:
+    """Mitsunobu displaces the alcohol by backside attack, so the carbinol carbon inverts."""
+
+    def test_s_alcohol_gives_r_ether(self, enumerator: ReactionEnumerator):
+        products = enumerator.products_for_pair(PHENOL, S_BUTAN_2_OL)
+        assert products == ["CC[C@@H](C)Oc1ccccc1"]
+
+    def test_r_alcohol_gives_s_ether(self, enumerator: ReactionEnumerator):
+        """The same templates must invert the opposite enantiomer too, not fix an absolute tag."""
+        products = enumerator.products_for_pair(PHENOL, R_BUTAN_2_OL)
+        assert products == ["CC[C@H](C)Oc1ccccc1"]
+
+    def test_undefined_centre_stays_undefined(self, enumerator: ReactionEnumerator):
+        """Inverting an unknown configuration is still unknown; no stereochemistry is invented."""
+        products = enumerator.products_for_pair(PHENOL, BUTAN_2_OL)
+        assert products == ["CCC(C)Oc1ccccc1"]
 
 
 class TestProductsForPair:
