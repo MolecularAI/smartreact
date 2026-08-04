@@ -14,16 +14,27 @@ from smartreact.types import ReactionResult
 from .conftest import (
     ACETIC_ACID,
     BIPHENYL,
+    BROMOANISOLE,
     BROMOBENZENE,
+    BUTAN_1_OL,
     BUTAN_2_OL,
+    BUTYLANISOLE,
     DIMETHYLAMINE,
     ETHANOL,
     ETHYLAMINE,
     IODOBENZENE,
+    IODOBUTANE,
+    IODOMETHANE,
+    METHOXYBIPHENYL,
     PHENOL,
     PHENYLBORONIC_ACID,
+    PHENYLZINC,
+    R_2_BUTOXYOCTANE,
     R_BUTAN_2_OL,
+    S_2_BROMOOCTANE,
+    S_2_METHOXYOCTANE,
     S_BUTAN_2_OL,
+    S_OCTAN_2_OL,
 )
 
 
@@ -72,6 +83,50 @@ class TestMitsunobuStereochemistry:
         """Inverting an unknown configuration is still unknown; no stereochemistry is invented."""
         products = enumerator.products_for_pair(PHENOL, BUTAN_2_OL)
         assert products == ["CCC(C)Oc1ccccc1"]
+
+
+class TestWilliamsonStereochemistry:
+    """Williamson is an SN2 on the halide, so only the halide carbon inverts."""
+
+    def test_halide_carbon_inverts(self, enumerator: ReactionEnumerator):
+        """(S)-2-bromooctane + butan-1-ol gives (R)-2-butoxyoctane."""
+        products = enumerator.products_for_pair(BUTAN_1_OL, S_2_BROMOOCTANE)
+        assert products == [R_2_BUTOXYOCTANE]
+
+    def test_alkoxide_carbon_is_untouched(self, enumerator: ReactionEnumerator):
+        """The alcohol's C-O bond never breaks, so (S)-octan-2-ol stays (S)."""
+        products = enumerator.products_for_pair(S_OCTAN_2_OL, IODOMETHANE)
+        assert products == [S_2_METHOXYOCTANE]
+
+    def test_undefined_centre_stays_undefined(self, enumerator: ReactionEnumerator):
+        products = enumerator.products_for_pair(PHENOL, "CCC(Br)C")
+        assert products == ["CCC(C)Oc1ccccc1"]
+
+
+class TestNegishi:
+    """`negishi` split into a preformed-organozinc and an in-situ-zincation variant."""
+
+    def test_batch_needs_a_preformed_organozinc(self, enumerator_all: ReactionEnumerator):
+        results = enumerator_all.enumerate_pair(BROMOANISOLE, PHENYLZINC)
+        assert {r.reaction_name for r in results} == {"negishi_batch"}
+        assert METHOXYBIPHENYL in {p for r in results for p in r.products}
+
+    def test_insitu_couples_two_halides(self, enumerator_all: ReactionEnumerator):
+        results = enumerator_all.enumerate_pair(IODOBUTANE, BROMOANISOLE)
+        assert "negishi_insitu" in {r.reaction_name for r in results}
+        assert BUTYLANISOLE in {p for r in results for p in r.products}
+
+    def test_insitu_needs_an_aryl_partner(self, enumerator_all: ReactionEnumerator):
+        """Two aliphatic halides are not a Negishi pair."""
+        products = enumerator_all.products_for_pair(IODOBUTANE, "CCBr")
+        assert BUTYLANISOLE not in products
+
+    def test_old_negishi_name_is_gone(self):
+        from smartreact import load_templates
+
+        names = {t.name for t in load_templates(reaction_list="all")}
+        assert "negishi" not in names
+        assert {"negishi_batch", "negishi_insitu"} <= names
 
 
 class TestProductsForPair:
