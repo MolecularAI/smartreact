@@ -34,6 +34,20 @@ IODOBUTANE = "CCCCI"
 METHOXYBIPHENYL = "COc1ccc(-c2ccccc2)cc1"
 BUTYLANISOLE = "CCCCc1ccc(OC)cc1"
 
+# The radical couplings go through a planar alkyl radical at the reacting carbon,
+# so both enantiomers converge on a product with no configuration there. A second
+# stereocentre elsewhere in the molecule is untouched.
+R_OCTAN_2_OL = "CCCCCC[C@@H](C)O"
+OCTAN_2_YL_ANISOLE = "CCCCCCC(C)c1ccc(OC)cc1"
+SS_3_METHYLPENTAN_2_OL = "C[C@H](O)[C@H](C)CC"
+RS_3_METHYLPENTAN_2_OL = "C[C@@H](O)[C@H](C)CC"
+S_3_METHYLPENTAN_2_YL_ANISOLE = "CC[C@@H](C)C(C)c1ccc(OC)cc1"
+R_2_BROMOOCTANE = "CCCCCC[C@@H](C)Br"
+BROMOBUTANE = "CCCCBr"
+S_2_BROMOBUTANE = "CC[C@H](C)Br"
+DODECAN_5_YL = "CCCCCCC(C)CCCC"
+DIMETHYLDECANE = "CCCCCCC(C)C(C)CC"
+
 
 @pytest.fixture(scope="session")
 def keygen() -> KeyGenerator:
