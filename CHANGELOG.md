@@ -2,7 +2,7 @@
 
 This follows the guideline on [keep a changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.0.0] 2026-08-05
 
 ### Added
 
@@ -16,12 +16,12 @@ This follows the guideline on [keep a changelog](https://keepachangelog.com/en/1
 
 ### Changed
 
-- **Breaking:** `negishi` is renamed `negishi_batch`, matching upstream. Its 44 templates are unchanged, but they always required a preformed organozinc reactant, which the new name makes explicit. `reaction_list=["negishi"]` must become `reaction_list=["negishi_batch"]`
+- **Breaking:** `negishi` is renamed `negishi_batch`. Its 44 templates are unchanged, but they always required a preformed organozinc reactant, which the new name makes explicit. `reaction_list=["negishi"]` must become `reaction_list=["negishi_batch"]`
 - 191 templates revised upstream across `chan_lam` (9), `imidazole_Xketone_synthesis` (10), `imidazole_condensation_acid` (60), `imidazole_condensation_amine` (60), `reductive_amination_ketone` (36) and `sn2_nheterocycle` (16) — mostly tighter atom environments and aromatic/aliphatic corrections. No other reaction's templates change
 - The `example` column was regenerated upstream for 1,316 rows across 10 reactions. Examples are illustrative only and do not affect enumeration; the refreshed ones are more accurate, reproducing their own template in every row sampled
 - Reaction templates updated with the inert `;!$([a3])` qualifier removed (11,848 occurrences across 2,368 templates). `[a3]` means "aromatic *and* isotope 3", which no realistic molecule satisfies
 - The same qualifier removed from 18 SMARTS-RX definitions in `src/smartreact/data/keys.txt` (84 occurrences), keeping the keys consistent with the templates derived from them
-- Key classification and enumeration results are unchanged: verified identical over the 1,000 public case-study building blocks and all 499,500 of their pairs
+- Removing that qualifier does not itself change key classification or enumeration results: verified identical over the 1,000 public case-study building blocks and all 499,500 of their pairs. The stereochemistry fixes above do change enumeration output
 
 ## [1.1.0] 2026-07-28
 

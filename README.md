@@ -189,6 +189,10 @@ Contributions are welcome — bug reports, feature requests, documentation fixes
 
 Authors and maintainers are listed in [`AUTHORS.md`](AUTHORS.md).
 
+### Citation
+
+If you use `smartreact` in your work, please cite the preprint: [doi.org/10.26434/chemrxiv.15006435](https://doi.org/10.26434/chemrxiv.15006435/v1)
+
 ### License
 
 Apache-2.0
