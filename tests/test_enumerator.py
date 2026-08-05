@@ -16,25 +16,35 @@ from .conftest import (
     BIPHENYL,
     BROMOANISOLE,
     BROMOBENZENE,
+    BROMOBUTANE,
     BUTAN_1_OL,
     BUTAN_2_OL,
     BUTYLANISOLE,
     DIMETHYLAMINE,
+    DIMETHYLDECANE,
+    DODECAN_5_YL,
     ETHANOL,
     ETHYLAMINE,
     IODOBENZENE,
     IODOBUTANE,
     IODOMETHANE,
     METHOXYBIPHENYL,
+    OCTAN_2_YL_ANISOLE,
     PHENOL,
     PHENYLBORONIC_ACID,
     PHENYLZINC,
+    R_2_BROMOOCTANE,
     R_2_BUTOXYOCTANE,
     R_BUTAN_2_OL,
+    R_OCTAN_2_OL,
+    RS_3_METHYLPENTAN_2_OL,
+    S_2_BROMOBUTANE,
     S_2_BROMOOCTANE,
     S_2_METHOXYOCTANE,
+    S_3_METHYLPENTAN_2_YL_ANISOLE,
     S_BUTAN_2_OL,
     S_OCTAN_2_OL,
+    SS_3_METHYLPENTAN_2_OL,
 )
 
 
@@ -101,6 +111,54 @@ class TestWilliamsonStereochemistry:
     def test_undefined_centre_stays_undefined(self, enumerator: ReactionEnumerator):
         products = enumerator.products_for_pair(PHENOL, "CCC(Br)C")
         assert products == ["CCC(C)Oc1ccccc1"]
+
+
+def products_of(enumerator: ReactionEnumerator, reaction: str, a: str, b: str) -> list[str]:
+    """Products from one named reaction, ignoring whatever else fires on the pair."""
+    results = enumerator.enumerate_pair(a, b)
+    return sorted({p for r in results if r.reaction_name == reaction for p in r.products})
+
+
+class TestRadicalCouplingRacemisation:
+    """Ni/photoredox couplings break the bond homolytically, so the reacting carbon
+    passes through a planar radical and its configuration is lost, not inverted."""
+
+    DEOX = "deoxygenative_coupling"
+    XEC = "cross_electrophile_coupling"
+
+    def test_deoxygenative_loses_the_carbinol_configuration(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.DEOX, BROMOANISOLE, S_OCTAN_2_OL)
+        assert products == [OCTAN_2_YL_ANISOLE]
+
+    def test_deoxygenative_is_enantioconvergent(self, enumerator: ReactionEnumerator):
+        """Both alcohol enantiomers give the same product, as an enantioconvergent
+        reaction requires — the substrate no longer determines the configuration."""
+        from_s = products_of(enumerator, self.DEOX, BROMOANISOLE, S_OCTAN_2_OL)
+        from_r = products_of(enumerator, self.DEOX, BROMOANISOLE, R_OCTAN_2_OL)
+        assert from_s == from_r == [OCTAN_2_YL_ANISOLE]
+
+    def test_deoxygenative_keeps_other_stereocentres(self, enumerator: ReactionEnumerator):
+        """Only the reacting carbon is scrambled; chirality elsewhere is transferred."""
+        products = products_of(enumerator, self.DEOX, BROMOANISOLE, SS_3_METHYLPENTAN_2_OL)
+        assert products == [S_3_METHYLPENTAN_2_YL_ANISOLE]
+        assert products == products_of(enumerator, self.DEOX, BROMOANISOLE, RS_3_METHYLPENTAN_2_OL)
+
+    def test_cross_electrophile_loses_the_halide_configuration(
+        self, enumerator: ReactionEnumerator
+    ):
+        products = products_of(enumerator, self.XEC, S_2_BROMOOCTANE, BROMOBUTANE)
+        assert products == [DODECAN_5_YL]
+        assert products == products_of(enumerator, self.XEC, R_2_BROMOOCTANE, BROMOBUTANE)
+
+    def test_cross_electrophile_racemises_both_partners(self, enumerator: ReactionEnumerator):
+        """Both electrophiles are activated, so both centres are scrambled."""
+        products = products_of(enumerator, self.XEC, S_2_BROMOOCTANE, S_2_BROMOBUTANE)
+        assert products == [DIMETHYLDECANE]
+
+    def test_cross_electrophile_aryl_coupling_still_works(self, enumerator: ReactionEnumerator):
+        """Aryl-aryl templates have no aliphatic centre and must be left alone."""
+        products = products_of(enumerator, self.XEC, BROMOANISOLE, "Brc1ccccn1")
+        assert products == ["COc1ccc(c2ccccn2)cc1"]
 
 
 class TestNegishi:
