@@ -953,7 +953,7 @@ def stage_parallel(cfg: Config) -> None:
     fig, ax = new_figure()
     plot_series(ax, xs, ys, C_BLUE, "Measured", "o", stds=[r["std_pps"] for r in records])
     ax.plot(xs, [ys[0] * x / xs[0] for x in xs], "--", color="0.55", linewidth=1.2,
-            label="Ideal linear scaling")
+            label="Linear scaling from 1 core")
     ax.set_yscale("log")
     ax.set_xscale("log", base=2)
     finish_axes(ax, "CPU cores", "Pairs / second", legend_loc="upper left")
@@ -1070,12 +1070,10 @@ def stage_precompute(cfg: Config) -> None:
             ("precomputed", "Precomputed keys", C_GREEN, "s")):
         plot_series(ax, xs, [r[f"{name}_mean_pps"] for r in records], color, label, marker,
                     stds=[r[f"{name}_std_pps"] for r in records])
-    ax.set_yscale("log")
     ax.set_xscale("log", base=2)
-    # The three curves span the whole panel, so make headroom for the legend
-    # rather than dropping it on top of one of them.
+    # Headroom for the legend rather than dropping it on top of a curve.
     top = max(r[f"{n}_mean_pps"] for r in records for n in ("naive", "standard", "precomputed"))
-    ax.set_ylim(top=top * 4)
+    ax.set_ylim(bottom=0, top=top * 1.25)
     finish_axes(ax, "Reuse factor (pair occurrences per molecule)", "Pairs / second",
                 legend_loc="upper left")
     fig.tight_layout()
