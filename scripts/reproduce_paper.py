@@ -55,7 +55,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from importlib.resources import files
 from pathlib import Path
 
@@ -92,7 +92,9 @@ from smartreact import (
 
 # Every route below shares the library's own product collection, so a
 # comparison measures the filter and not a reimplementation of RunReactants.
-from smartreact.enumerator import _collect_products
+# _worker_init is the pool initializer the enumerator uses itself; the parallel
+# stage needs it to build a pool of its own (see pooled_enumerator).
+from smartreact.enumerator import _collect_products, _worker_init
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -165,11 +167,16 @@ def main() -> int:
         # 5, not 3: the band now covers the molecule draw as well as the
         # template draw, and a std from three samples is barely an estimate.
         filterability_repeats=5,
+        # Redundancy runs the admitted applications rather than just counting
+        # them, and applying costs far more than screening, so it takes a
+        # smaller draw than the sweep above.
+        n_redundancy_molecules=120,
+        redundancy_repeats=3,
         n_baseline_molecules=None,      # None = all building blocks
         n_brute_pairs=500,              # brute force cannot run at full scale
         n_scaling_molecules=60,
         scaling_repeats=3,
-        pairs_per_core=5000,
+        n_parallel_pairs=100_000,
         parallel_repeats=3,
         precompute_reuse=(2, 4, 8, 16, 32, 64, 128, 256),
         precompute_repeats=3,
@@ -210,9 +217,10 @@ def main() -> int:
         settings.update(
             uspto_limit=3000, saturation_repeats=2,
             n_filterability_molecules=40, filterability_repeats=1,
+            n_redundancy_molecules=30, redundancy_repeats=1,
             n_baseline_molecules=60, n_brute_pairs=100,
             n_scaling_molecules=20, scaling_repeats=1,
-            pairs_per_core=200, parallel_repeats=1,
+            n_parallel_pairs=2000, parallel_repeats=1,
             # Enough points that the sweep still looks like a curve.
             precompute_reuse=(2, 4, 8, 16, 32), precompute_repeats=1,
             n_casestudy_molecules=150,
@@ -273,11 +281,13 @@ class Config:
     saturation_repeats: int
     n_filterability_molecules: int
     filterability_repeats: int
+    n_redundancy_molecules: int
+    redundancy_repeats: int
     n_baseline_molecules: int | None
     n_brute_pairs: int
     n_scaling_molecules: int
     scaling_repeats: int
-    pairs_per_core: int
+    n_parallel_pairs: int
     parallel_repeats: int
     precompute_reuse: tuple[int, ...]
     precompute_repeats: int
@@ -526,7 +536,14 @@ def usable_bimolecular(smarts_list: Sequence[str]) -> list[str]:
 
 
 def stage_filterability(cfg: Config) -> None:
-    def compute() -> list[dict]:
+    cached: dict[str, list[tuple[str, list[str]]]] = {}
+
+    def libraries() -> list[tuple[str, list[str]]]:
+        """Both libraries, size-matched. Built once and shared by the sweep and
+        the redundancy pass below, and not built at all when --reuse serves both
+        of their CSVs from disk."""
+        if "libs" in cached:
+            return cached["libs"]
         with bundled("templates.txt").open(encoding="utf-8", newline="") as fh:
             sr = [r["reaction_template"] for r in csv.DictReader(fh, delimiter="\t")]
         path = prepare_uspto_templates(cfg.cores, cfg.uspto_limit)
@@ -537,9 +554,13 @@ def stage_filterability(cfg: Config) -> None:
         sr_lib = usable_bimolecular(unique_templates(sr, LIB_CONSTRUCTED))
         up_lib = usable_bimolecular(unique_templates(uspto, LIB_EXTRACTED))
         sr_lib, up_lib = match_library_sizes(sr_lib, up_lib, LIB_CONSTRUCTED, LIB_EXTRACTED)
-        libraries = [(LIB_CONSTRUCTED, sr_lib), (LIB_EXTRACTED, up_lib)]
-        for label, s in libraries:
+        cached["libs"] = [(LIB_CONSTRUCTED, sr_lib), (LIB_EXTRACTED, up_lib)]
+        for label, s in cached["libs"]:
             print(f"  {label:26s} {len(s):,} usable templates")
+        return cached["libs"]
+
+    def compute() -> list[dict]:
+        libs = libraries()
 
         # A fresh molecule draw per repeat, so the band covers molecule sampling
         # as well as template sampling. The draws are shared by both libraries
@@ -557,7 +578,7 @@ def stage_filterability(cfg: Config) -> None:
         rng = random.Random(SEED)
 
         records = []
-        for label, smarts in libraries:
+        for label, smarts in libs:
             n_total = len(smarts)
             for n in sorted({min(c, n_total) for c in FILTERABILITY_COUNTS} | {n_total}):
                 queries, seconds, admitted = [], [], []
@@ -595,7 +616,62 @@ def stage_filterability(cfg: Config) -> None:
                       f"{a_mean / n_pairs:7.3f} applications/pair")
         return records
 
+    def compute_redundancy() -> list[dict]:
+        """How much of the admitted work re-derives an existing product.
+
+        The sweep above stops at the filter and counts what each library
+        *admits*. This runs those applications at full library size and asks how
+        many distinct templates arrive at the same product from the same pair --
+        the difference between a library that describes a reactive site once and
+        one that describes it many times over. Applying costs far more than
+        screening, hence the smaller molecule draw (cfg.n_redundancy_molecules).
+        """
+        reps = cfg.redundancy_repeats
+        n_mol = cfg.n_redundancy_molecules
+        n_pairs = n_mol * (n_mol - 1) // 2
+        print(f"  redundancy: {reps} draw{'s' if reps != 1 else ''} of {n_mol:,} "
+              f"molecules, {n_pairs:,} pairs each, full libraries")
+        def col(rows: list[dict], key: str) -> tuple[float, float]:
+            return mean_std([float(s[key]) for s in rows])
+
+        records = []
+        for label, smarts in libraries():
+            per_rep = []
+            for r in range(reps):
+                smiles = load_building_blocks(cfg.building_blocks, n=n_mol, seed=SEED + r)
+                molecules = parse_molecules(smiles)
+                screen = screen_filtercatalog(smarts, molecules)
+                reached = product_template_counts(screen.triples, smarts, smiles, cfg.cores)
+                stats = redundancy_stats(reached)
+                stats["n_admitted"] = len(screen.triples)
+                per_rep.append(stats)
+
+            tpp, tpp_sd = col(per_rep, "templates_per_product")
+            multi, multi_sd = col(per_rep, "pct_products_multi_template")
+            redundant, redundant_sd = col(per_rep, "pct_redundant_applications")
+            records.append({
+                "library": label, "n_templates": len(smarts), "n_molecules": n_mol,
+                "n_pairs": n_pairs, "n_repeats": reps,
+                "n_admitted": round(col(per_rep, "n_admitted")[0], 1),
+                "n_productive_applications": round(
+                    col(per_rep, "n_productive_applications")[0], 1),
+                "n_products": round(col(per_rep, "n_products")[0], 1),
+                "templates_per_product": round(tpp, 3),
+                "templates_per_product_std": round(tpp_sd, 3),
+                "pct_products_multi_template": round(multi, 1),
+                "pct_products_multi_template_std": round(multi_sd, 1),
+                "max_templates_per_product": max(s["max_templates_per_product"]
+                                                 for s in per_rep),
+                "pct_redundant_applications": round(redundant, 1),
+                "pct_redundant_applications_std": round(redundant_sd, 1)})
+            print(f"  [{label[:12]:12s}] {tpp:5.2f} templates/product, "
+                  f"{multi:4.1f}% of products from >1 template "
+                  f"(max {records[-1]['max_templates_per_product']}), "
+                  f"{redundant:4.1f}% of applications redundant")
+        return records
+
     records = load_or_compute(OUT / "benchmark_filterability.csv", compute, cfg)
+    load_or_compute(OUT / "benchmark_redundancy.csv", compute_redundancy, cfg)
 
     styles = {LIB_CONSTRUCTED: (C_BLUE, "o"), LIB_EXTRACTED: (C_RED, "s"),
               "SmartReact (constructed)": (C_BLUE, "o"),  # legacy CSV keys
@@ -891,58 +967,86 @@ def stage_scaling(cfg: Config) -> None:
 # ==========================================================================
 
 
-def stage_parallel(cfg: Config) -> None:
-    """Keys are precomputed once, so the timed region is reaction application.
+def pooled_enumerator(n_workers: int) -> ReactionEnumerator:
+    """An enumerator that goes through a worker pool even at one worker.
 
-    Under weak scaling the pair count grows with the core count while the
-    molecule pool stays fixed, so classification -- once per molecule, not once
-    per pair -- would otherwise be amortised over more pairs at every step up.
-    That alone produced an apparent 10.7x speedup from 1 to 4 cores.
+    ``ReactionEnumerator._process_chunk`` routes ``n_cores == 1`` down a serial
+    branch that runs in the calling process, so a one-worker point taken through
+    the public API is not comparable to the rest of a core sweep: different code
+    path, and no pool overhead at all.
+
+    ``n_cores`` is held at two or more only to keep the serial branch untaken; at
+    one worker that means the pairs arrive as two batches which the single worker
+    runs back to back, i.e. the same work over one extra round trip.
+    """
+    enum = ReactionEnumerator(n_cores=max(n_workers, 2))
+    enum._pool = ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=partial(_worker_init, enum.templates, enum.template_index, enum.log_file))
+    return enum
+
+
+def stage_parallel(cfg: Config) -> None:
+    """Strong scaling: one fixed workload, timed at every core count.
+
+    Every point enumerates the same pairs, so a speedup is a ratio between
+    measurements of identical work. The weak-scaling design this replaced grew
+    the pair count with the core count, which put every point on a different
+    workload and left the reference line depending on how a per-call fixed cost
+    happened to amortise at each one.
+
+    Keys are precomputed, so the timed region is the enumeration plus the setup
+    the enumerator does in the calling process on every call -- parsing each
+    unique building block once. That setup does not parallelise, so it is the
+    serial fraction the curve bends towards, which is what a scaling plot is
+    supposed to show.
     """
     def compute() -> list[dict]:
         pool = load_building_blocks(cfg.building_blocks)
         core_counts = [2**i for i in range(int(math.log2(max(1, cfg.cores))) + 1)]
         if core_counts[-1] != cfg.cores:
             core_counts.append(cfg.cores)
-        needed = cfg.pairs_per_core * max(core_counts)
         available = len(pool) * (len(pool) - 1) // 2
-        if needed > available:
-            raise ValueError(f"needs {needed:,} distinct pairs, pool has {available:,}")
-        print(f"  pool {len(pool):,}, sweep {core_counts}, {cfg.pairs_per_core} pairs/core")
+        if cfg.n_parallel_pairs > available:
+            raise ValueError(f"needs {cfg.n_parallel_pairs:,} distinct pairs, "
+                             f"pool has {available:,}")
+        pairs = sample_pairs(pool, cfg.n_parallel_pairs)
+        print(f"  pool {len(pool):,}, sweep {core_counts}, "
+              f"{len(pairs):,} pairs at every point")
 
         with KeyGenerator(n_cores=cfg.cores) as keygen:
             keys = preprocess_smiles(list(pool), keygen)
 
         records = []
         for n_cores in core_counts:
-            n_pairs = cfg.pairs_per_core * n_cores
-            pairs = sample_pairs(pool, n_pairs)
-            enum = ReactionEnumerator(n_cores=n_cores)
+            enum = pooled_enumerator(n_cores)
             try:
-                # Warm *this* enumerator, on the pairs it is about to be timed
-                # on: its pool is created lazily and its workers' compiled-
-                # reaction caches start empty, so a cold first repeat charges
-                # pool spawn and template compilation to the measurement. Both
-                # grow with n_cores, and the 1-core point runs serially and
-                # never spawns a pool at all, so leaving them in bends the
-                # curve away from linear.
-                enum.enumerate_pairs(pairs, parallel=n_cores > 1, precomputed_keys=keys)
-                pps = []
+                # Warm *this* enumerator: its workers' compiled-reaction caches
+                # start empty, so a cold first repeat charges template
+                # compilation to the measurement, and that cost grows with
+                # n_cores because every worker pays it.
+                enum.enumerate_pairs(pairs, parallel=True, precomputed_keys=keys)
+                secs = []
                 for _ in range(cfg.parallel_repeats):
                     t0 = time.perf_counter()
-                    enum.enumerate_pairs(pairs, parallel=n_cores > 1, precomputed_keys=keys)
-                    pps.append(n_pairs / (time.perf_counter() - t0))
+                    enum.enumerate_pairs(pairs, parallel=True, precomputed_keys=keys)
+                    secs.append(time.perf_counter() - t0)
             finally:
                 enum.close()
-            mean, std = mean_std(pps)
-            records.append({"n_cores": n_cores, "n_pairs": n_pairs, "mean_pps": round(mean, 2),
-                            "std_pps": round(std, 2), "n_building_blocks": len(pool),
+            s_mean, s_std = mean_std(secs)
+            mean, std = mean_std([len(pairs) / s for s in secs])
+            records.append({"n_cores": n_cores, "n_pairs": len(pairs),
+                            "mean_s": round(s_mean, 3), "std_s": round(s_std, 3),
+                            "mean_pps": round(mean, 2), "std_pps": round(std, 2),
+                            "n_building_blocks": len(pool),
                             "keys_precomputed": True, "n_repeats": cfg.parallel_repeats})
-            print(f"  cores={n_cores:3d}  {mean:9.1f} +/- {std:6.1f} pairs/s")
+            print(f"  cores={n_cores:3d}  {s_mean:7.2f}s  "
+                  f"{mean:9.1f} +/- {std:6.1f} pairs/s")
 
         base = records[0]["mean_pps"]
         for r in records:
             r["speedup_vs_1_core"] = round(r["mean_pps"] / base, 2) if base else 0.0
+            r["parallel_efficiency"] = round(r["speedup_vs_1_core"] / r["n_cores"], 3)
         return records
 
     records = load_or_compute(OUT / "benchmark_parallel_cores.csv", compute, cfg)
@@ -1981,6 +2085,80 @@ def _apply_chunk(triples, collect=True):
             if collect:
                 out.append((m1, m2, tuple(sorted(products))))
     return productive, kept, out
+
+
+def _redundancy_chunk(triples):
+    """Every (pair, product, template) an admitted application yields.
+
+    Unlike _apply_chunk this keeps the template index: the question here is not
+    how many products come out but how many different templates arrive at the
+    same one.
+    """
+    out = []
+    for m1, m2, t in triples:
+        rxn = _w_rxn(t)
+        if rxn is None:
+            continue
+        a, b = (m1, m2) if m1 <= m2 else (m2, m1)
+        for product in _collect_products(rxn, _W_MOLS[m1], _W_MOLS[m2], [0]):
+            out.append((a, b, product, t))
+    return out
+
+
+def product_template_counts(triples, smarts_list, smiles, cores, batch=20_000):
+    """Map each (pair, product) to the set of templates that reach it.
+
+    Keyed on the unordered pair, and templates are collected in a set, so a
+    template admitted in both orientations counts once: two orientations of one
+    template are not two different routes to a product.
+    """
+    reached: dict[tuple[int, int, str], set[int]] = defaultdict(set)
+
+    def fold(out):
+        for a, b, product, t in out:
+            reached[(a, b, product)].add(t)
+
+    if cores <= 1:
+        _apply_worker_init(smarts_list, smiles)
+        for chunk in _batched(triples, batch):
+            fold(_redundancy_chunk(chunk))
+    else:
+        with ProcessPoolExecutor(max_workers=cores, initializer=_apply_worker_init,
+                                 initargs=(smarts_list, smiles)) as pool:
+            batches = _batched(triples, batch)
+            pending = []
+            for chunk in itertools.islice(batches, cores * 4):
+                pending.append(pool.submit(_redundancy_chunk, chunk))
+            while pending:
+                fold(pending.pop(0).result())
+                if (nxt := next(batches, None)) is not None:
+                    pending.append(pool.submit(_redundancy_chunk, nxt))
+    return reached
+
+
+def redundancy_stats(reached: dict[tuple[int, int, str], set[int]]) -> dict:
+    """Summarise how much of the matching work re-derives an existing product.
+
+    ``applications`` counts distinct (template, pair, product) combinations --
+    the productive matching work the library admitted. ``products`` counts the
+    distinct (pair, product) results that work produced. The gap between them is
+    work spent re-deriving a product another template already reached.
+    """
+    if not reached:
+        return {"n_products": 0, "n_productive_applications": 0,
+                "templates_per_product": 0.0, "pct_products_multi_template": 0.0,
+                "max_templates_per_product": 0, "pct_redundant_applications": 0.0}
+    sizes = [len(ts) for ts in reached.values()]
+    n_products = len(sizes)
+    n_applications = sum(sizes)
+    return {
+        "n_products": n_products,
+        "n_productive_applications": n_applications,
+        "templates_per_product": n_applications / n_products,
+        "pct_products_multi_template": 100 * sum(1 for s in sizes if s > 1) / n_products,
+        "max_templates_per_product": max(sizes),
+        "pct_redundant_applications": 100 * (1 - n_products / n_applications),
+    }
 
 
 def _batched(triples: Iterable, size: int) -> Iterator[list]:
