@@ -696,8 +696,11 @@ def stage_filterability(cfg: Config) -> None:
     # "per pair" is load-bearing: without a denominator the number 1.11 has no
     # meaning. Oriented applications, so a template that matches a pair both
     # ways counts twice -- hence "applications", not "templates matched".
+    # "Mean" and "after filtering" are dropped from the label because at
+    # FONT_LABEL the full phrase is taller than the figure and tight_layout
+    # cannot fix that; the caption states both.
     finish_axes(ax, "Reaction templates in library",
-                "Mean template applications per pair (after filtering)",
+                "Template applications per pair",
                 legend_loc="upper left")
     fig.tight_layout()
     savefig(fig, OUT / "benchmark_filterability")
