@@ -174,7 +174,10 @@ def main() -> int:
         redundancy_repeats=3,
         n_baseline_molecules=None,      # None = all building blocks
         n_brute_pairs=500,              # brute force cannot run at full scale
-        n_scaling_molecules=60,
+        # Disjoint pairs: every molecule appears in exactly one pair, the worst
+        # case for filtering because classification cannot be amortised. 500
+        # uses all 1,000 public building blocks.
+        n_scaling_pairs=500,
         scaling_repeats=3,
         n_parallel_pairs=100_000,
         parallel_repeats=3,
@@ -219,7 +222,7 @@ def main() -> int:
             n_filterability_molecules=40, filterability_repeats=1,
             n_redundancy_molecules=30, redundancy_repeats=1,
             n_baseline_molecules=60, n_brute_pairs=100,
-            n_scaling_molecules=20, scaling_repeats=1,
+            n_scaling_pairs=20, scaling_repeats=1,
             n_parallel_pairs=2000, parallel_repeats=1,
             # Enough points that the sweep still looks like a curve.
             precompute_reuse=(2, 4, 8, 16, 32), precompute_repeats=1,
@@ -285,7 +288,7 @@ class Config:
     redundancy_repeats: int
     n_baseline_molecules: int | None
     n_brute_pairs: int
-    n_scaling_molecules: int
+    n_scaling_pairs: int
     scaling_repeats: int
     n_parallel_pairs: int
     parallel_repeats: int
@@ -864,7 +867,7 @@ def stage_baselines(cfg: Config) -> None:
 # Stage: scaling -- throughput vs template count, every route
 # ==========================================================================
 
-TEMPLATE_COUNTS = [100, 500, 1000, 5000]
+TEMPLATE_COUNTS = [1, 5, 10, 50, 100, 500, 1000, 5000]
 ROUTES = ("brute", "filtercatalog", "substructlibrary", "smartreact")
 # All four routes are measured and written to the CSV; the figure plots only
 # smartreact against brute, which is the comparison the paper makes. The RDKit
@@ -872,38 +875,43 @@ ROUTES = ("brute", "filtercatalog", "substructlibrary", "smartreact")
 
 
 def _timed_route(route, templates, smiles, molecules, cores) -> tuple[float, float, int]:
-    """(screen seconds, apply seconds, admitted) -- all routes share apply_triples."""
+    """(screen seconds, apply seconds, admitted) -- all routes share apply_triples.
+
+    Molecules are paired disjointly, (0, 1), (2, 3), ...: no molecule is reused,
+    so each route pays its per-molecule screening cost once per pair.
+    """
     smarts = [t.smarts for t in templates]
     if route == "brute":
-        n_pairs = len(smiles) * (len(smiles) - 1) // 2
+        n_pairs = len(smiles) // 2
         stream = ((a, b, t) for t in range(len(templates))
-                  for m1, m2 in itertools.combinations(range(len(smiles)), 2)
-                  for a, b in ((m1, m2), (m2, m1)))
+                  for m1 in range(0, 2 * n_pairs, 2)
+                  for a, b in ((m1, m1 + 1), (m1 + 1, m1)))
         # Same batch size as the filtered routes: batching changes scheduling
         # overhead, which would otherwise leak into the timing comparison.
         secs, *_ = apply_triples(stream, smarts, smiles, cores, collect=False)
         return 0.0, secs, n_pairs * len(templates) * 2
     if route == "filtercatalog":
-        screen = screen_filtercatalog(smarts, molecules)
+        screen = screen_filtercatalog(smarts, molecules, disjoint=True)
     elif route == "substructlibrary":
-        screen = screen_substructlibrary(smarts, molecules, cores)
+        screen = screen_substructlibrary(smarts, molecules, cores, disjoint=True)
     else:
-        screen, _ = screen_smartsrx(templates, smiles, cores)
+        screen, _ = screen_smartsrx(templates, smiles, cores, disjoint=True)
     secs, *_ = apply_triples(screen.triples, smarts, smiles, cores, collect=False)
     return screen.seconds, secs, len(screen.triples)
 
 
 def stage_scaling(cfg: Config) -> None:
     def compute() -> list[dict]:
-        smiles = load_building_blocks(cfg.building_blocks, n=cfg.n_scaling_molecules)
+        smiles = load_building_blocks(cfg.building_blocks, n=2 * cfg.n_scaling_pairs)
+        smiles = smiles[:len(smiles) // 2 * 2]
         molecules = parse_molecules(smiles)
         templates = load_templates("all")
-        n_total, n_pairs = len(templates), len(smiles) * (len(smiles) - 1) // 2
+        n_total, n_pairs = len(templates), len(smiles) // 2
         counts = sorted({min(c, n_total) for c in TEMPLATE_COUNTS} | {n_total})
         # Hard-coded for the same reason as in baselines: the three prefilters
         # do not thread alike, so a multi-core sweep would compare thread counts.
         cc = 1
-        print(f"  {len(smiles):,} molecules, {n_pairs:,} pairs, sweep {counts}")
+        print(f"  {len(smiles):,} molecules, {n_pairs:,} disjoint pairs, sweep {counts}")
         print("  routes timed on one core so the filters are compared on equal footing")
 
         # Absorbs first-touch RDKit and allocator cost, and nothing more:
@@ -911,8 +919,8 @@ def stage_scaling(cfg: Config) -> None:
         # rebuilds the KeyGenerator on every call, so each timed run recompiles
         # what it touches. All four routes pay that equally, so it does not tilt
         # the comparison -- but these are not steady-state throughputs.
-        _timed_route("smartreact", templates[:50], smiles[:5], molecules[:5], 1)
-        _timed_route("brute", templates[:50], smiles[:5], molecules[:5], 1)
+        _timed_route("smartreact", templates[:50], smiles[:6], molecules[:6], 1)
+        _timed_route("brute", templates[:50], smiles[:6], molecules[:6], 1)
 
         rng = random.Random(SEED + 1)
         records = []
@@ -945,8 +953,8 @@ def stage_scaling(cfg: Config) -> None:
     records = load_or_compute(OUT / "benchmark_scaling.csv", compute, cfg)
 
     # The CSV keeps all four routes; the figure shows only the two the paper
-    # argues about. Log y, because brute force runs ~250x slower than SmartReact
-    # at the full library and would otherwise lie flat on the axis.
+    # argues about. Log y, because brute force spans four orders of magnitude
+    # over the sweep and would otherwise lie flat on the axis.
     records = sorted(records, key=lambda r: r["n_templates"])
     xs = [r["n_templates"] for r in records]
     fig, ax = new_figure()
@@ -1957,12 +1965,18 @@ def _dedupe_lhs(smarts_list: Sequence[str], pooled: bool):
     return q1, q2, lhs
 
 
-def _join_triples(hits1, hits2, template_lhs) -> list[tuple[int, int, int]]:
+def _join_triples(hits1, hits2, template_lhs,
+                  disjoint: bool = False) -> list[tuple[int, int, int]]:
     """Every oriented (molecule, molecule, template) triple the filter admits.
 
     Template-major, which the apply workers rely on. m1 != m2 mirrors
     itertools.combinations; both orientations appear when both are compatible.
+    disjoint=True pairs each molecule only with its partner m ^ 1.
     """
+    if disjoint:
+        sets2 = [set(h) for h in hits2]
+        return [(m1, m1 ^ 1, t) for t, (a, b) in enumerate(template_lhs)
+                for m1 in hits1[a] if m1 ^ 1 in sets2[b]]
     return [(m1, m2, t) for t, (a, b) in enumerate(template_lhs)
             for m1, m2 in itertools.product(hits1[a], hits2[b]) if m1 != m2]
 
@@ -1979,7 +1993,7 @@ class ScreenResult:
     query_kind: str = "distinct LHS SMARTS"
 
 
-def screen_filtercatalog(smarts_list, molecules) -> ScreenResult:
+def screen_filtercatalog(smarts_list, molecules, disjoint: bool = False) -> ScreenResult:
     """RDKit's own screening machinery, one catalog per reactant role.
 
     Single-threaded, and takes no core count: FilterCatalog.GetMatches has no
@@ -2002,12 +2016,13 @@ def screen_filtercatalog(smarts_list, molecules) -> ScreenResult:
             hits1[int(e.GetProp("query_index"))].append(mid)
         for e in cat2.GetMatches(mol):
             hits2[int(e.GetProp("query_index"))].append(mid)
-    triples = _join_triples(hits1, hits2, lhs)
+    triples = _join_triples(hits1, hits2, lhs, disjoint)
     return ScreenResult("filtercatalog", time.perf_counter() - t0, len(q1) + len(q2),
                         triples, "distinct LHS SMARTS")
 
 
-def screen_substructlibrary(smarts_list, molecules, cores: int = 1) -> ScreenResult:
+def screen_substructlibrary(smarts_list, molecules, cores: int = 1,
+                            disjoint: bool = False) -> ScreenResult:
     """Same exact prefilter via a pattern-fingerprint SubstructLibrary."""
     queries, _, lhs = _dedupe_lhs(smarts_list, pooled=True)
     # The reaction's own match parameters, so screening matches what
@@ -2025,16 +2040,18 @@ def screen_substructlibrary(smarts_list, molecules, cores: int = 1) -> ScreenRes
     # maxResults=-1 is explicit: some overloads default to a finite cap.
     hits = [list(library.GetMatches(q, params, numThreads=1 if cores <= 1 else -1,
                                     maxResults=-1)) for q in queries]
-    triples = _join_triples(hits, hits, lhs)
+    triples = _join_triples(hits, hits, lhs, disjoint)
     return ScreenResult("substructlibrary", time.perf_counter() - t0, len(queries), triples)
 
 
 def screen_smartsrx(templates: Sequence[ReactionTemplate], smiles: Sequence[str],
-                    cores: int = 1) -> tuple[ScreenResult, dict[str, set[str]]]:
+                    cores: int = 1, disjoint: bool = False
+                    ) -> tuple[ScreenResult, dict[str, set[str]]]:
     """SmartReact's route: classify once against SMARTS-RX, then index.
 
     Timed on the same footing as the RDKit routes -- classification plus the
-    join that turns keys into candidate triples.
+    join that turns keys into candidate triples. disjoint=True pairs only
+    (0, 1), (2, 3), ... instead of every combination.
     """
     index = build_template_index(list(templates))
     keygen = KeyGenerator(n_cores=cores)
@@ -2042,8 +2059,10 @@ def screen_smartsrx(templates: Sequence[ReactionTemplate], smiles: Sequence[str]
         t0 = time.perf_counter()
         keys = preprocess_smiles(list(smiles), keygen)
         n_rules = len(keygen.rules)
+        pairs = (((i, i + 1) for i in range(0, len(smiles) - 1, 2)) if disjoint
+                 else itertools.combinations(range(len(smiles)), 2))
         triples = [(i, j, t) if order == 0 else (j, i, t)
-                   for i, j in itertools.combinations(range(len(smiles)), 2)
+                   for i, j in pairs
                    for t, orders in candidate_templates(
                        keys[smiles[i]], keys[smiles[j]], index).items()
                    for order in orders]
