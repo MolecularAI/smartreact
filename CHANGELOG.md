@@ -2,6 +2,14 @@
 
 This follows the guideline on [keep a changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- Products that survived `MolToSmiles` during enumeration but failed `MolFromSmiles` on re-parsing. Two template families could write them. Both are now constrained on the reactant side. No valid product is lost and the template count is unchanged at 9,770
+- `horner_wadsworth_emmons`: the new alkene could be formed at a ring CH, leaving that carbon with five bonds. All 8 templates now require the carbon carrying the phosphate oxygen not to be a ring CH.
+- `imidazole_Xketone_synthesis`: an amidine whose nitrogens were already substituted gave a 1,3-disubstituted imidazolium written without its formal charge. All 10 templates now require both amidine nitrogens to be unsubstituted
+
 ## [2.0.0] 2026-08-05
 
 ### Added
