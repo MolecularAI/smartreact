@@ -546,7 +546,6 @@ class TestPrecomputedKeysImmutability:
 
 
 class TestProductSanitization:
-
     HWE = "horner_wadsworth_emmons"
     IMIDAZOLE = "imidazole_Xketone_synthesis"
 
