@@ -35,6 +35,9 @@ coverage.xml
 # SLURM (cluster-specific, not for publication)
 /slurm/
 
+# upstream template drop that is not distributed with the package.
+/scripts/prepare_templates.py
+
 # VS Code settings
 .vscode/
 

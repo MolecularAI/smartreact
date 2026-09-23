@@ -12,7 +12,10 @@ from smartreact.enumerator import _collect_products
 from smartreact.types import ReactionResult
 
 from .conftest import (
+    ACETAMIDINE,
     ACETIC_ACID,
+    BENZALDEHYDE,
+    BENZAMIDINE,
     BIPHENYL,
     BROMOANISOLE,
     BROMOBENZENE,
@@ -20,6 +23,8 @@ from .conftest import (
     BUTAN_1_OL,
     BUTAN_2_OL,
     BUTYLANISOLE,
+    CYCLIC_DINUCLEOTIDE,
+    DIETHYL_BENZYLPHOSPHONATE,
     DIMETHYLAMINE,
     DIMETHYLDECANE,
     DODECAN_5_YL,
@@ -28,11 +33,18 @@ from .conftest import (
     IODOBENZENE,
     IODOBUTANE,
     IODOMETHANE,
+    METHOXY_FLUORO_BENZALDEHYDE_ESTER,
     METHOXYBIPHENYL,
+    METHYL_PHENYLIMIDAZOLE,
+    N_ETHYL_CYCLIC_AMIDINE,
+    N_TERT_BUTYL_AMIDINE,
     OCTAN_2_YL_ANISOLE,
+    PHENACYL_BROMIDE,
     PHENOL,
+    PHENYL_PHENYLIMIDAZOLE,
     PHENYLBORONIC_ACID,
     PHENYLZINC,
+    PROPENYLBENZENE,
     R_2_BROMOOCTANE,
     R_2_BUTOXYOCTANE,
     R_BUTAN_2_OL,
@@ -531,3 +543,42 @@ class TestPrecomputedKeysImmutability:
             for k, v in keys_map.items():
                 assert frozenset(v) == before_snapshot[k]
                 assert id(v) == before_ids[k]
+
+
+class TestProductSanitization:
+
+    HWE = "horner_wadsworth_emmons"
+    IMIDAZOLE = "imidazole_Xketone_synthesis"
+
+    def test_macrocyclic_phosphate_products_all_reparse(self, enumerator: ReactionEnumerator):
+        products = products_of(
+            enumerator, self.HWE, CYCLIC_DINUCLEOTIDE, METHOXY_FLUORO_BENZALDEHYDE_ESTER
+        )
+        assert products
+        assert all(Chem.MolFromSmiles(p) is not None for p in products)
+
+    def test_macrocycle_still_reacts_at_its_exocyclic_carbon(self, enumerator: ReactionEnumerator):
+        products = products_of(
+            enumerator, self.HWE, CYCLIC_DINUCLEOTIDE, METHOXY_FLUORO_BENZALDEHYDE_ESTER
+        )
+        assert len(products) == 2
+
+    def test_ordinary_phosphonate_ester_is_unaffected(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.HWE, DIETHYL_BENZYLPHOSPHONATE, BENZALDEHYDE)
+        assert products == [PROPENYLBENZENE]
+
+    def test_unsubstituted_amidine_still_gives_an_imidazole(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.IMIDAZOLE, BENZAMIDINE, PHENACYL_BROMIDE)
+        assert products == [PHENYL_PHENYLIMIDAZOLE]
+
+    def test_aliphatic_amidine_still_gives_an_imidazole(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.IMIDAZOLE, ACETAMIDINE, PHENACYL_BROMIDE)
+        assert products == [METHYL_PHENYLIMIDAZOLE]
+
+    def test_distally_substituted_amidine_is_rejected(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.IMIDAZOLE, N_TERT_BUTYL_AMIDINE, PHENACYL_BROMIDE)
+        assert products == []
+
+    def test_n_substituted_imine_amidine_is_rejected(self, enumerator: ReactionEnumerator):
+        products = products_of(enumerator, self.IMIDAZOLE, N_ETHYL_CYCLIC_AMIDINE, PHENACYL_BROMIDE)
+        assert products == []

@@ -27,11 +27,15 @@ umap-learn = ">=0.5"
 pyarrow = ">=10"
 matplotlib = ">=3.5"
 
+[feature.baseline.pypi-dependencies]
+rdchiral = "*"
+
 [environments]
 default = { solve-group = "default" }
 dev = { features = ["dev"], solve-group = "default" }
 notebook = { features = ["dev", "notebook"], solve-group = "default" }
 casestudy = { features = ["dev", "casestudy"], solve-group = "default" }
+baseline = { features = ["dev", "casestudy", "baseline"], solve-group = "default" }
 
 [tasks]
 test = "pytest"
