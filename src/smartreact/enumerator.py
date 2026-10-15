@@ -109,6 +109,7 @@ def _worker_run_pair(
     m2: Chem.Mol | None,
     keys1: set[str],
     keys2: set[str],
+    sort_reactants: bool = True,
 ) -> list[ReactionResult]:
     """Run all applicable templates for one pair in a worker process.
 
@@ -126,7 +127,7 @@ def _worker_run_pair(
     if m1 is None or m2 is None:
         return []
 
-    ra, rb = tuple(sorted([s1, s2]))
+    ra, rb = tuple(sorted([s1, s2])) if sort_reactants else (s1, s2)
     results: list[ReactionResult] = []
     candidates = candidate_templates(keys1, keys2, _WORKER_TEMPLATE_INDEX)
     for idx in sorted(candidates):
@@ -159,6 +160,7 @@ def _worker_run_pairs_batch(
     pairs: list[tuple[str, str]],
     smiles_mols: dict[str, Chem.Mol | None],
     smiles_keys: dict[str, set[str]],
+    sort_reactants: bool = True,
 ) -> list[ReactionResult]:
     """Process a batch of pairs in a single worker call.
 
@@ -179,7 +181,13 @@ def _worker_run_pairs_batch(
     for s1, s2 in pairs:
         results.extend(
             _worker_run_pair(
-                s1, s2, smiles_mols[s1], smiles_mols[s2], smiles_keys[s1], smiles_keys[s2]
+                s1,
+                s2,
+                smiles_mols[s1],
+                smiles_mols[s2],
+                smiles_keys[s1],
+                smiles_keys[s2],
+                sort_reactants,
             )
         )
     return results
@@ -268,8 +276,13 @@ class ReactionEnumerator:
         m2: Chem.Mol | None,
         keys1: set[str],
         keys2: set[str],
+        sort_reactants: bool = True,
     ) -> list[ReactionResult]:
         """Core enumeration logic given already-parsed molecules.
+
+        If ``sort_reactants`` is ``True`` (default), ``reactant_a`` and
+        ``reactant_b`` of each result hold the two SMILES in sorted order.
+        Otherwise they hold ``s1`` and ``s2`` as passed in.
 
         Callers that process many pairs (``_process_chunk``) parse each
         unique SMILES once and reuse the ``Mol`` across all of that
@@ -304,7 +317,7 @@ class ReactionEnumerator:
                 )
                 continue
 
-            ra, rb = tuple(sorted([s1, s2]))
+            ra, rb = tuple(sorted([s1, s2])) if sort_reactants else (s1, s2)
             results.append(
                 ReactionResult(
                     reactant_a=ra,
@@ -321,16 +334,19 @@ class ReactionEnumerator:
         s2: str,
         keys1: set[str],
         keys2: set[str],
+        sort_reactants: bool = True,
     ) -> list[ReactionResult]:
         m1 = Chem.MolFromSmiles(s1)
         m2 = Chem.MolFromSmiles(s2)
-        return self._enumerate_pair_from_mols(s1, s2, m1, m2, keys1, keys2)
+        return self._enumerate_pair_from_mols(s1, s2, m1, m2, keys1, keys2, sort_reactants)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def enumerate_pair(self, s1: str, s2: str, clean_smiles: bool = False) -> list[ReactionResult]:
+    def enumerate_pair(
+        self, s1: str, s2: str, clean_smiles: bool = False, sort_reactants: bool = True
+    ) -> list[ReactionResult]:
         """
         Enumerate all products for a single pair of SMILES across all
         configured reaction templates.
@@ -342,6 +358,10 @@ class ReactionEnumerator:
         clean_smiles:
             If ``True``, standardize each SMILES before enumeration.
             Returns ``[]`` if either molecule cannot be parsed after cleaning.
+        sort_reactants:
+            If ``True`` (default), ``reactant_a`` and ``reactant_b`` of each result
+            hold the two SMILES in sorted order. If ``False``, they hold ``s1``
+            and ``s2`` as given, so the caller sets the reactant order.
         """
         if clean_smiles:
             c1 = _clean_smiles(s1)
@@ -358,17 +378,21 @@ class ReactionEnumerator:
 
         k1 = self._keys_for_smiles(s1)
         k2 = self._keys_for_smiles(s2)
-        return self._enumerate_pair_from_keys(s1, s2, k1, k2)
+        return self._enumerate_pair_from_keys(s1, s2, k1, k2, sort_reactants)
 
-    def products_for_pair(self, s1: str, s2: str, clean_smiles: bool = False) -> list[str]:
+    def products_for_pair(
+        self, s1: str, s2: str, clean_smiles: bool = False, sort_reactants: bool = True
+    ) -> list[str]:
         """Return only unique product SMILES for a pair.
 
         Parameters
         ----------
         clean_smiles:
             If ``True``, standardize each SMILES before enumeration.
+        sort_reactants:
+            Passed to :meth:`enumerate_pair`.
         """
-        res = self.enumerate_pair(s1, s2, clean_smiles=clean_smiles)
+        res = self.enumerate_pair(s1, s2, clean_smiles=clean_smiles, sort_reactants=sort_reactants)
         return sorted({p for r in res for p in r.products})
 
     def _process_chunk(
@@ -377,6 +401,7 @@ class ReactionEnumerator:
         parallel: bool,
         clean_smiles: bool,
         precomputed_keys: dict[str, set[str]] | None,
+        sort_reactants: bool = True,
     ) -> Iterator[ReactionResult]:
         """Enumerate reactions for a materialised list of pairs and yield results."""
         if not pair_list:
@@ -430,7 +455,13 @@ class ReactionEnumerator:
         if not parallel or self.n_cores == 1:
             for a, b in pair_list:
                 yield from self._enumerate_pair_from_mols(
-                    a, b, smiles_mols[a], smiles_mols[b], smiles_keys[a], smiles_keys[b]
+                    a,
+                    b,
+                    smiles_mols[a],
+                    smiles_mols[b],
+                    smiles_keys[a],
+                    smiles_keys[b],
+                    sort_reactants,
                 )
             return
 
@@ -447,6 +478,7 @@ class ReactionEnumerator:
                 batch,
                 {s: smiles_mols[s] for pair in batch for s in pair},
                 {s: smiles_keys[s] for pair in batch for s in pair},
+                sort_reactants,
             )
             for batch in batches
         ]
@@ -471,6 +503,7 @@ class ReactionEnumerator:
         clean_smiles: bool = False,
         precomputed_keys: dict[str, set[str]] | None = None,
         chunk_size: int = 50_000,
+        sort_reactants: bool = True,
     ) -> Iterator[ReactionResult]:
         """
         Enumerate reactions for many reactant pairs, yielding results as each
@@ -492,10 +525,15 @@ class ReactionEnumerator:
         chunk_size:
             Number of pairs processed per iteration.  Larger values amortise
             key-classification overhead at the cost of higher peak memory.
+        sort_reactants:
+            If ``True`` (default), each result lists its reactants in sorted
+            order. If ``False``, it lists them in the order given in the input pair.
         """
         pairs_iter = iter(pairs)
         while chunk := [(str(a), str(b)) for a, b in itertools.islice(pairs_iter, chunk_size)]:
-            yield from self._process_chunk(chunk, parallel, clean_smiles, precomputed_keys)
+            yield from self._process_chunk(
+                chunk, parallel, clean_smiles, precomputed_keys, sort_reactants
+            )
 
     def enumerate_pairs(
         self,
@@ -503,6 +541,7 @@ class ReactionEnumerator:
         parallel: bool = False,
         clean_smiles: bool = False,
         precomputed_keys: dict[str, set[str]] | None = None,
+        sort_reactants: bool = True,
     ) -> list[ReactionResult]:
         """
         Enumerate reactions for many reactant pairs.
@@ -521,9 +560,14 @@ class ReactionEnumerator:
             by :func:`~smartreact.preprocessing.preprocess_smiles`. Avoids
             re-classifying molecules that have already been processed. Keys for
             any SMILES not present in the mapping are computed on the fly.
+        sort_reactants:
+            If ``True`` (default), each result lists its reactants in sorted
+            order. If ``False``, it lists them in the order given in the input pair.
         """
         pair_list = [(str(a), str(b)) for a, b in pairs]
-        return list(self._process_chunk(pair_list, parallel, clean_smiles, precomputed_keys))
+        return list(
+            self._process_chunk(pair_list, parallel, clean_smiles, precomputed_keys, sort_reactants)
+        )
 
 
 __all__ = ["ReactionEnumerator"]
