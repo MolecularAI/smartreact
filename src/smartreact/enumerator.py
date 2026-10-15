@@ -282,7 +282,7 @@ class ReactionEnumerator:
 
         If ``sort_reactants`` is ``True`` (default), ``reactant_a`` and
         ``reactant_b`` of each result hold the two SMILES in sorted order.
-        Otherwise they hold ``s1`` and ``s2`` as passed in.
+        Otherwise they hold ``s1`` and ``s2`` in the order passed in.
 
         Callers that process many pairs (``_process_chunk``) parse each
         unique SMILES once and reuse the ``Mol`` across all of that
@@ -361,7 +361,7 @@ class ReactionEnumerator:
         sort_reactants:
             If ``True`` (default), ``reactant_a`` and ``reactant_b`` of each result
             hold the two SMILES in sorted order. If ``False``, they hold ``s1``
-            and ``s2`` as given, so the caller sets the reactant order.
+            and ``s2`` in the order given, so the caller controls the reactant order.
         """
         if clean_smiles:
             c1 = _clean_smiles(s1)
@@ -527,7 +527,7 @@ class ReactionEnumerator:
             key-classification overhead at the cost of higher peak memory.
         sort_reactants:
             If ``True`` (default), each result lists its reactants in sorted
-            order. If ``False``, it lists them in the order given in the input pair.
+            order. If ``False``, it lists them in the order of the input pair.
         """
         pairs_iter = iter(pairs)
         while chunk := [(str(a), str(b)) for a, b in itertools.islice(pairs_iter, chunk_size)]:
@@ -562,7 +562,7 @@ class ReactionEnumerator:
             any SMILES not present in the mapping are computed on the fly.
         sort_reactants:
             If ``True`` (default), each result lists its reactants in sorted
-            order. If ``False``, it lists them in the order given in the input pair.
+            order. If ``False``, it lists them in the order of the input pair.
         """
         pair_list = [(str(a), str(b)) for a, b in pairs]
         return list(

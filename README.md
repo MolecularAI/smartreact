@@ -61,7 +61,7 @@ results = enumerator.enumerate_pair("c1ccc(Br)cc1", "c1ccc(B(O)O)cc1")
 # Pass clean_smiles=True to standardize SMILES before enumeration if desired
 results = enumerator.enumerate_pair("c1ccc(Br)cc1", "c1ccc(B(O)O)cc1", clean_smiles=True)
 
-# By default reactant_a and reactant_b are sorted. Pass sort_reactants=False to keep the input order
+# By default reactant_a and reactant_b are sorted. Pass sort_reactants=False to keep the input order.
 results = enumerator.enumerate_pair("c1ccc(B(O)O)cc1", "c1ccc(Br)cc1", sort_reactants=False)
 ```
 

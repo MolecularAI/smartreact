@@ -80,7 +80,7 @@ class TestEnumeratePair:
             assert r.reactant_a <= r.reactant_b
 
     def test_sort_reactants_false_keeps_input_order(self, enumerator: ReactionEnumerator):
-        # The two molecules sort one way round, so testing both orders shows the input order is used.
+        # Test both argument orders. Only one of them matches the sorted order.
         for s1, s2 in [(BROMOBENZENE, PHENYLBORONIC_ACID), (PHENYLBORONIC_ACID, BROMOBENZENE)]:
             results = enumerator.enumerate_pair(s1, s2, sort_reactants=False)
             assert results
