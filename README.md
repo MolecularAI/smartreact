@@ -60,6 +60,9 @@ results = enumerator.enumerate_pair("c1ccc(Br)cc1", "c1ccc(B(O)O)cc1")
 
 # Pass clean_smiles=True to standardize SMILES before enumeration if desired
 results = enumerator.enumerate_pair("c1ccc(Br)cc1", "c1ccc(B(O)O)cc1", clean_smiles=True)
+
+# By default reactant_a and reactant_b are sorted. Pass sort_reactants=False to keep the input order.
+results = enumerator.enumerate_pair("c1ccc(B(O)O)cc1", "c1ccc(Br)cc1", sort_reactants=False)
 ```
 
 #### Batch Processing
@@ -159,7 +162,7 @@ Any SMILES not present in `keys_map` are classified on-the-fly as a fallback.
 - **Preprocessing**: `preprocess_smiles()` classifies each molecule once and returns a `dict[str, set[str]]` that can be passed to `enumerate_pairs(precomputed_keys=...)`. This is most useful when the same molecules appear in many pairs, e.g. when enumerating all pairwise combinations of a library.
 - **SMILES standardization**: All enumeration methods and `preprocess_smiles` accept `clean_smiles=True` to normalize SMILES before processing (removes isotopes, strips salts/solvents, neutralizes charges, keeps the largest fragment).
 - **Reaction Selection**: All 36 available reaction types are used by default. Pass a custom list to restrict enumeration to specific reactions, e.g. `reaction_list=["suzuki", "amide_coupling"]`.
-- **Result Format**: `ReactionResult` objects with `reactant_a`, `reactant_b` (sorted alphabetically), `reaction_name`, and `products` (canonical SMILES).
+- **Result Format**: `ReactionResult` objects with `reactant_a`, `reactant_b` (sorted alphabetically by default, or in input order with `sort_reactants=False`), `reaction_name`, and `products` (canonical SMILES).
 
 > **Note on RDKit logging.** Importing `smartreact` silences RDKit's C++ log channel (`rdApp.*`) process-wide via `RDLogger.DisableLog`. This keeps batch enumeration from flooding stderr when parsing unreliable inputs, but it also mutes RDKit warnings produced by *other* code in the same process. If you need RDKit's warnings, re-enable them after import with `RDLogger.EnableLog("rdApp.*")`.
 

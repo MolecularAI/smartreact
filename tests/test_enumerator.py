@@ -79,6 +79,23 @@ class TestEnumeratePair:
         for r in results:
             assert r.reactant_a <= r.reactant_b
 
+    def test_sort_reactants_false_keeps_input_order(self, enumerator: ReactionEnumerator):
+        # Test both argument orders. Only one of them matches the sorted order.
+        for s1, s2 in [(BROMOBENZENE, PHENYLBORONIC_ACID), (PHENYLBORONIC_ACID, BROMOBENZENE)]:
+            results = enumerator.enumerate_pair(s1, s2, sort_reactants=False)
+            assert results
+            for r in results:
+                assert (r.reactant_a, r.reactant_b) == (s1, s2)
+
+    def test_sort_reactants_false_pairs(self, enumerator: ReactionEnumerator):
+        pair = (PHENYLBORONIC_ACID, BROMOBENZENE)
+        for parallel in (False, True):
+            results = enumerator.enumerate_pairs([pair], parallel=parallel, sort_reactants=False)
+            assert results
+            assert all((r.reactant_a, r.reactant_b) == pair for r in results)
+        lazy = list(enumerator.enumerate_pairs_lazy([pair], sort_reactants=False))
+        assert lazy and all((r.reactant_a, r.reactant_b) == pair for r in lazy)
+
     def test_invalid_smiles(self, enumerator: ReactionEnumerator):
         results = enumerator.enumerate_pair("invalid", BROMOBENZENE)
         assert results == []
@@ -305,9 +322,9 @@ class TestEnumeratePairs:
         real_submit = ex.submit
         captured: list[tuple[list[tuple[str, str]], set[str], set[str]]] = []
 
-        def _spy(fn, batch, mols, keys):
+        def _spy(fn, batch, mols, keys, *extra):
             captured.append((batch, set(mols), set(keys)))
-            return real_submit(fn, batch, mols, keys)
+            return real_submit(fn, batch, mols, keys, *extra)
 
         with patch.object(ex, "submit", _spy):
             enum_par.enumerate_pairs(pairs, parallel=True)

@@ -9,6 +9,7 @@
 
 We welcome contributions from the community. Contributors will be listed here.
 
+- **Matt Ball** — minor QoL changes
 <!--
 Example entry:
 - **Name** — contribution area (e.g., SMARTS templates, performance work, documentation)

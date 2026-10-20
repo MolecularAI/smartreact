@@ -2,6 +2,12 @@
 
 This follows the guideline on [keep a changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `sort_reactants` argument (default `True`) on `ReactionEnumerator.enumerate_pair`, `products_for_pair`, `enumerate_pairs` and `enumerate_pairs_lazy`. With `sort_reactants=False`, `reactant_a` and `reactant_b` of each result keep the order of the input pair, so a caller can supply reactants in a deterministic order. The default behaviour is unchanged.
+
 ## [2.0.1] 2026-09-23
 
 ### Fixed
